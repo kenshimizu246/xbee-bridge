@@ -108,24 +108,24 @@ def post_django(address, data):
     global url
     try:
         now = datetime.now()
-        logger.info("start post_django: {} {} {}".format(address, len(data), os.getcwd()))
+        write_log("start post_django: {} {} {}".format(address, len(data), os.getcwd()))
         jpg_as_np = np.frombuffer(bytes(data), dtype=np.uint8)
-        logger.info("post_django2: {}".format(jpg_as_np))
+        write_log("post_django2: {}".format(jpg_as_np))
         img_org = cv2.imdecode(jpg_as_np, flags=1)
-        logger.info("post_django3")
+        write_log("post_django3")
         fileName = "{}_{}.jpg".format(address, now.strftime("%m%d%Y_%H%M%S"))
         if(os.path.exists("data")):
             fileName = "data/{}".format(fileName)
-        logger.info("post_django fileName: {} {}".format(fileName, str(img_org)))
+        write_log("post_django fileName: {} {}".format(fileName, str(img_org)))
         # imwrite returns bool
         ret = cv2.imwrite(fileName, img_org)
-        logger.info("post_django wrote fileName: {} {}".format(fileName, ret))
+        write_log("post_django wrote fileName: {} {}".format(fileName, ret))
         files = { 'file_uploaded': (fileName, open(fileName, 'rb'), 'image/jpeg') }
-        logger.info("url:{}, filename:{}".format(url, fileName))
+        write_log("url:{}, filename:{}".format(url, fileName))
         response = requests.post(url, files=files)
-        logger.info("post response:{}".format(response))
+        write_log("post response:{}".format(response))
     except Exception as e:
-        logger.info("Exception:{}".format(e))
+        write_log("Exception:{}".format(e))
 
 def send_missing(addr, missing):
     global xb, config_path
@@ -144,12 +144,12 @@ def send_missing(addr, missing):
         print("xb.send_missing: {}".format(e)) 
         logger.info("xb.send_missing: {}".format(e)) 
 
-def send_write_request_ack(addr, len):
+def send_write_request_ack(addr, req_id, len):
     global xb
 
     try:
-        write_log("start send_write_request_ack: {} {}".format(addr, len)) 
-        mm = CMD_WRITE_REQUEST_ACK.to_bytes(1, 'big') + len.to_bytes(4, 'big')
+        write_log("start send_write_request_ack:[addr:{}][req_id:{}][len:{}][type:{}]".format(addr, req_id, len, req_id)) 
+        mm = CMD_WRITE_REQUEST_ACK.to_bytes(1, 'big') + req_id.to_bytes(1,byteorder='big') + len.to_bytes(4, 'big')
         st = xb.send_data(addr, mm)
         write_log("end send_write_request_ack ok:[{}][{}][{}]".format(addr, len, st.transmit_status)) 
     except TransmitException as e:
@@ -157,25 +157,25 @@ def send_write_request_ack(addr, len):
     except Exception as e:
         write_log("send_write_request_ack error: {}".format(e)) 
 
-def send_write_data_ack(addr, seq):
+def send_write_data_ack(addr, req_id, seq):
     global xb
 
     try:
-        write_log("start send_write_data_ack: {} {}".format(addr, seq)) 
-        mm = CMD_WRITE_DATA_ACK.to_bytes(1, 'big') + seq.to_bytes(4, 'big')
+        write_log("start send_write_data_ack: {} {} {}".format(addr, req_id, seq)) 
+        mm = CMD_WRITE_DATA_ACK.to_bytes(1, 'big') + req_id.to_bytes(1,byteorder='big') + seq.to_bytes(4, 'big')
         st = xb.send_data(addr, mm) # returns digi.xbee.packets.common.TransmitStatusPacket
-        write_log("end send_write_data_ack ok:[{}][{}][{}]".format(addr, seq, st.transmit_status)) 
+        write_log("end send_write_data_ack ok:[{}][{}][{}][{}]".format(addr, req_id, seq, st.transmit_status)) 
     except TransmitException as e:
         write_log("send_write_data_ack error: {}".format(e)) 
     except Exception as e:
         write_log("send_write_data_ack error: {}".format(e)) 
 
-def send_write_done_ack(addr, ln, seq):
+def send_write_done_ack(addr, req_id, ln, seq):
     global xb
 
     try:
-        write_log("start send_write_done_ack: {} {} {}".format(addr, ln, seq)) 
-        mm = CMD_WRITE_DONE_ACK.to_bytes(1, 'big') + ln.to_bytes(4, 'big') + seq.to_bytes(4, 'big')
+        write_log("start send_write_done_ack: {} {} {} {}".format(addr, req_id, ln, seq)) 
+        mm = CMD_WRITE_DONE_ACK.to_bytes(1, 'big') + req_id.to_bytes(1,byteorder='big') + ln.to_bytes(4, 'big') + seq.to_bytes(4, 'big')
         st = xb.send_data(addr, mm)
         write_log("end send_write_done_ack ok:[{}][{}]".format(addr, st.transmit_status)) 
     except TransmitException as e:
@@ -185,92 +185,93 @@ def send_write_done_ack(addr, ln, seq):
 
 def my_data_received_callback(xbee_message):
     global xb, config_path
-    remote_dev = xbee_message.remote_device
-    address = xbee_message.remote_device.get_64bit_addr()
-    cmd = xbee_message.data[0]
-    data = xbee_message.data
 
-    write_log("Command from {} [cmd:{}][{}]".format(address, cmd, type(xbee_message)))
-    if(cmd == CMD_HELLO):
-        logger.info("Hello from {} [{}]".format(address, data[1:]))
-        mm = CMD_HELLO.to_bytes(1, 'big')
-        logger.info("Hello reply:{}:{}".format(len(mm), mm))
-        st = xb.send_data(xbee_message.remote_device, mm)
-        logger.info("reply status:{}".format(st))
-    elif(cmd == CMD_GET_CONFIG):
-        logger.info("Get config from %s: %d" % (address, cmd))
-        mm = CMD_CONFIG.to_bytes(1, 'big')
-        l = 0
-        d = None
-        with open("{}/{}.cfg".format(config_path, address)) as f:
-            s = f.read()
-            if(len(s) > 0):
-                d = bytearray(s.encode())
-                l = len(d)
-        if(l > 0):
-            mm = mm + l.to_bytes(4, 'big') + d
+    try:
+        remote_dev = xbee_message.remote_device
+        address = xbee_message.remote_device.get_64bit_addr()
+        cmd = xbee_message.data[0]
+        data = xbee_message.data
+
+        write_log("Command from {} [cmd:{}][{}]".format(address, cmd, type(xbee_message)))
+        write_log("data:{}".format(data))
+        if(cmd == CMD_HELLO):
+            logger.info("Hello from {} [{}]".format(address, data[1:]))
+            mm = CMD_HELLO.to_bytes(1, 'big')
+            logger.info("Hello reply:{}:{}".format(len(mm), mm))
+            st = xb.send_data(xbee_message.remote_device, mm)
+            logger.info("reply status:{}".format(st))
+        elif(cmd == CMD_GET_CONFIG):
+            logger.info("Get config from %s: %d" % (address, cmd))
+            mm = CMD_CONFIG.to_bytes(1, 'big')
+            l = 0
+            d = None
+            with open("{}/{}.cfg".format(config_path, address)) as f:
+                s = f.read()
+                if(len(s) > 0):
+                    d = bytearray(s.encode())
+                    l = len(d)
+            if(l > 0):
+                mm = mm + l.to_bytes(4, 'big') + d
+            else:
+                mm = mm + l.to_bytes(4, 'big')
+            logger.info("send config:{}:{}".format(len(mm), mm))
+            st = xb.send_data(xbee_message.remote_device, mm)
+            logger.info("reply status:{}".format(st))
+        elif(cmd == CMD_WRITE_REQUEST):
+            req_id = data[1]
+            data_len = int.from_bytes(data[2:6], byteorder='big')
+            packet_cnt = int.from_bytes(data[6:10], byteorder='big')
+            buffers[address] = None
+            seqs[address] = []
+            write_log("Data Req from {} [reqid:{}][len:{}][pkt:{}]".format(address, req_id, data_len, packet_cnt))
+            tpe.submit(send_write_request_ack, remote_dev, req_id, data_len)
+        elif(cmd == CMD_WRITE_DATA):
+            if(address in buffers):
+                req_id = data[1]
+                seq = int.from_bytes(data[2:6], byteorder='big')
+                write_log("Write from 1 {} [req_id:{}][seq:{}][len:{}]".format(address, req_id, seq, len(data)))
+                if(address not in seqs or seqs[address] is None):
+                    seqs[address] = []
+                if(seq not in seqs[address]):
+                    seqs[address].append(seq)
+                    if(buffers[address] is None):
+                        buffers[address] = {}
+                    buffers[address][seq] = bytearray(data[6:])
+                else:
+                    write_log("Not Write from {} [req_id:{}][seq:{}][len:{}][{}]".format(address, req_id, seq, len(data), len(buffers[address])))
+                write_log("Write from 3 {} [req_id:{}][seq:{}][len:{}][{}]".format(address, req_id, seq, len(data), len(buffers[address])))
+                tpe.submit(send_write_data_ack, remote_dev, req_id, seq)
+        elif(cmd == CMD_WRITE_DONE):
+            req_id = data[1]
+            ln  = int.from_bytes(data[2:6], byteorder='big')
+            pktcnt = int.from_bytes(data[6:10], byteorder='big')
+            if(address in buffers and address in seqs):
+                write_log("Done from {} [ln:{}][seq:{}][buff:{}]".format(address, ln, pktcnt, len(buffers[address])))
+                if(len(buffers[address]) == pktcnt):
+                    write_log("submit post_django: {} {}".format(address, len(buffers[address]))) 
+                    data = None
+                    seqs[address].sort()
+                    for s in seqs[address]:
+                        if(data == None):
+                            data = buffers[address][s]
+                        else:
+                            data = data + buffers[address][s]
+                    tpe.submit(post_django, address, data)
+                else:
+                    missing = []
+                    for i in range(0, pktcnt):
+                        if(i not in seqs):
+                            missing.append(i)
+                tpe.submit(send_write_done_ack, remote_dev, req_id, ln, pktcnt)
+            buffers[address] = None
+            seqs[address] = []
+            print("Done from %s: %d %d %d %d" % (address, cmd, req_id, ln, pktcnt))
         else:
-            mm = mm + l.to_bytes(4, 'big')
-        logger.info("send config:{}:{}".format(len(mm), mm))
-        st = xb.send_data(xbee_message.remote_device, mm)
-        logger.info("reply status:{}".format(st))
-    elif(cmd == CMD_WRITE_REQUEST):
-        data_len = int.from_bytes(data[1:5], byteorder='big')
-        packet_cnt = int.from_bytes(data[5:9], byteorder='big')
-        buffers[address] = None
-        seqs[address] = []
-        write_log("Data Req from {} [len:{}][pkt:{}]".format(address, data_len, packet_cnt))
-        tpe.submit(send_write_request_ack, remote_dev, data_len)
-    elif(cmd == CMD_WRITE_DATA):
-        if(address in buffers):
-            seq = int.from_bytes(data[1:5], byteorder='big')
-            write_log("Write from {} [seq:{}][len:{}]".format(address, seq, len(data)))
-            if(address not in seqs or seqs[address] is None):
-                seqs[address] = []
-            # else:
-                # check missing seq
-                # last_seq = seqs[address][-1]
-                # for missing in range(last_seq, seq):
-            seqs[address].append(seq)
-            if(buffers[address] is None):
-                buffers[address] = bytearray(data[5:])
-            else:
-                buffers[address] = buffers[address] + bytearray(data[5:])
-            write_log("Write from {} [seq:{}][len:{}][{}]".format(address, seq, len(data), len(buffers[address])))
-            tpe.submit(send_write_data_ack, remote_dev, seq)
-    elif(cmd == CMD_WRITE_DONE):
-        ln  = int.from_bytes(data[1:5], byteorder='big')
-        seq = int.from_bytes(data[5:9], byteorder='big')
-        if(address in buffers and address in seqs):
-            write_log("Done from {} [ln:{}][seq:{}][buff:{}]".format(address, ln, seq, len(buffers[address])))
-            if(len(buffers[address]) == ln):
-                write_log("submit post_django: {} {}".format(address, len(buffers[address]))) 
-                tpe.submit(post_django, address, buffers[address])
-            else:
-                missing = []
-                for i in range(0, seq):
-                    if(i not in seqs):
-                        missing.append(i)
-                # if(len(missing) > 0):
-                    # send_missing(xbee_message.remote_device, missing)
-                    # try:
-                    #     ss = len(missing)
-                    #     mm = CMD_RECV_STAT.to_bytes(1, 'big') + ss.to_bytes(4, 'big')
-                    #     for i in missing:
-                    #         mm = mm + i.to_bytes(4, 'big')
-                    #         print("missing: {}".format(i)) 
-                    #         logger.info("missing: {}".format(i)) 
-                    # 
-                    #     st = xb.send_data(xbee_message.remote_device, mm)
-                    # except TransmitException as e:
-                    #     print("xb.send_data: {}".format(e)) 
-                    #     logger.info("xb.send_data: {}".format(e)) 
-            tpe.submit(send_write_done_ack, remote_dev, ln, seq)
-        buffers[address] = None
-        seqs[address] = []
-        print("Done from %s: %d %d %d" % (address, cmd, ln, seq))
-    else:
-        print("Received data from %s: %d" % (address, cmd))
+            print("Received data from %s: %d" % (address, cmd))
+    except TransmitException as e:
+        write_log("my_data_received_callback error: {}".format(e)) 
+    except Exception as e:
+        write_log("my_data_received_callback error: {}".format(e)) 
 
 def stop_handler(signum, frame):
     logger.info("signum:{}".format(signum))
