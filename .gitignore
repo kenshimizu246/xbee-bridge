@@ -2,3 +2,4 @@ xbee-python
 config
 data
 logs
+.*.swp

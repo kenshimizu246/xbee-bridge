@@ -29,7 +29,7 @@ from digi.xbee.reader import DataReceived
 from digi.xbee.packets.aft import ApiFrameType
 from digi.xbee.packets.common import TransmitStatusPacket
 from digi.xbee.packets.base import XBeeAPIPacket, DictKeys
-from digi.xbee.exception import InvalidOperatingModeException, InvalidPacketException, TimeoutException, TransmitException
+from digi.xbee.exception import InvalidOperatingModeException, InvalidPacketException, TimeoutException, TransmitException, XBeeException
 from digi.xbee.io import IOSample, IOLine
 from digi.xbee.util import utils
 
@@ -82,6 +82,7 @@ log_file = "{}/my_log.log".format(log_path)
 
 xb = None
 stop_flag = False
+restart_cnt = 0
 buffers = {}
 seqs = {}
 tpe = ThreadPoolExecutor(max_workers=5)
@@ -153,9 +154,9 @@ def send_write_request_ack(addr, req_id, len):
         st = xb.send_data(addr, mm)
         write_log("end send_write_request_ack ok:[{}][{}][{}]".format(addr, len, st.transmit_status)) 
     except TransmitException as e:
-        write_log("send_write_request_ack error: {}".format(e)) 
+        write_log("send_write_request_ack TransmitException: {}".format(e)) 
     except Exception as e:
-        write_log("send_write_request_ack error: {}".format(e)) 
+        write_log("send_write_request_ack Exception: {}".format(e)) 
 
 def send_write_data_ack(addr, req_id, seq):
     global xb
@@ -166,9 +167,9 @@ def send_write_data_ack(addr, req_id, seq):
         st = xb.send_data(addr, mm) # returns digi.xbee.packets.common.TransmitStatusPacket
         write_log("end send_write_data_ack ok:[{}][{}][{}][{}]".format(addr, req_id, seq, st.transmit_status)) 
     except TransmitException as e:
-        write_log("send_write_data_ack error: {}".format(e)) 
+        write_log("send_write_data_ack TransmitException: {}".format(e)) 
     except Exception as e:
-        write_log("send_write_data_ack error: {}".format(e)) 
+        write_log("send_write_data_ack Exception: {}".format(e)) 
 
 def send_write_done_ack(addr, req_id, ln, seq):
     global xb
@@ -184,13 +185,15 @@ def send_write_done_ack(addr, req_id, ln, seq):
         write_log("send_write_done_ack error: {}".format(e)) 
 
 def my_data_received_callback(xbee_message):
-    global xb, config_path
+    global xb, config_path, restart_cnt
 
     try:
         remote_dev = xbee_message.remote_device
         address = xbee_message.remote_device.get_64bit_addr()
         cmd = xbee_message.data[0]
         data = xbee_message.data
+
+        restart_cnt = 0
 
         write_log("Command from {} [cmd:{}][{}]".format(address, cmd, type(xbee_message)))
         write_log("data:{}".format(data))
@@ -276,6 +279,8 @@ def my_data_received_callback(xbee_message):
 def stop_handler(signum, frame):
     logger.info("signum:{}".format(signum))
     global stop_flag
+    global restart_cnt
+    restart_cnt = True
     stop_flag = True
 
 def main():
@@ -325,22 +330,36 @@ def main():
     logger.info("ZigBeeDevice {} {}".format(options.zigbee, options.baudrate))
     xb = ZigBeeDevice(options.zigbee, options.baudrate)
 
-    logger.info("ZigBeeDevice.optn()")
-    xb.open()
-
-    logger.info("add xbee handler.")
-    xb.add_data_received_callback(my_data_received_callback)
-
-    logger.info("start loop.")
     cnt = 0
     while(not stop_flag):
-        cnt = cnt + 1
-        if((cnt % 60) == 0):
-            logger.info("sleepping.")
-        time.sleep(1)
+        logger.info("ZigBeeDevice.optn()")
+        xb.open()
 
-    logger.info("remove xbee handler.")
-    xb.del_data_received_callback(my_data_received_callback)
+        logger.info("add xbee handler.")
+        xb.add_data_received_callback(my_data_received_callback)
+
+        logger.info("start loop.")
+        restart_cnt = 0
+        while(restart_cnt < 60):
+            cnt = cnt + 1
+            restart_cnt = restart_cnt + 1
+#            if((cnt % 60) == 0):
+#                logger.info("sleeping.")
+            logger.info("sleeping.")
+            time.sleep(1)
+
+        try:
+            logger.info("remove xbee handler.")
+            xb.del_data_received_callback(my_data_received_callback)
+        except XBeeException as e:
+            write_log("XBeeException while removing xbee handler:{}".format(e))
+        except Exception as e:
+            write_log("Exception while removing xbee handler:{}".format(e))
+
+        try:
+            xb.close()
+        except Exception as e:
+            write_log("Exception while close xbee:{}".format(e))
 
 if __name__ == "__main__":
     main()
